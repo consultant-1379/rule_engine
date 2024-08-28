@@ -1,0 +1,155 @@
+package com.ericsson.oss.prototype.cea.rca.simple
+
+import com.ericsson.cea.rca.Incident
+import com.ericsson.cea.rca.RadioMetrics
+import com.ericsson.cea.rca.Causes
+global com.ericsson.cea.rca.Explanation explanation;
+
+dialect "mvel"
+
+rule "3G Attach Rejected - Subscription accessibility problem" 
+	when
+		Incident( name == "ATTACH_FAILURE_RATIO" &&
+				  cause == Causes.GPRS_SERVICE_NOT_ALLOWED )
+	then
+		explanation.details = "Subscription accessibility problem"
+end
+
+rule "3G Attach Rejected - Network problem" 
+	when
+		Incident( name == "ATTACH_FAILURE_RATIO" && 
+				  cause == Causes.GPRS_SERVICES_NOT_ALLOWED_IN_THIS_PLMN )
+	then
+		explanation.details = "Attach rejected: undefined IMSI or roaming restrictions"
+end
+
+rule "3G Attach Rejected - Network Failure"
+	when
+		Incident( name == "ATTACH_FAILURE_RATIO" &&
+				  cause == Causes.NETWORK_FAILURE )
+	then
+		explanation.details = "Network problem"
+end
+
+rule "3G Activate Rejected - Configuration problem" 
+	when
+		Incident( name == "ATTACH_FAILURE_RATIO" &&
+					( cause == Causes.USER_AUTHENTICATION_FAILED || 
+					  cause == Causes.UNKNOWN_PDP_ADDRESS_OR_PDP_TYPE || 
+					  cause == Causes.UNKNOWN_OR_MISSING_ACCESS_POINT_NAME ) )
+	then
+		explanation.details = "Configuration problem"
+end
+
+rule "Excessive ping-pong" 
+	when
+		Incident( name == "END_TO_END_LATENCY" )
+	then
+		explanation.details =  "Network problem"
+end
+
+// Rules below are added for the new framework 
+rule "Low FTP throughput due to congestion"
+activation-group "FtpThroughput"
+salience 1
+	when
+		Incident( name == "FILE_DOWNLOAD_EFFECTIVE_DATA_RATE")
+		RadioMetrics(getHighspeedUsers() > 5)
+		RadioMetrics(getRAT() == "WCDMA")
+	then
+		explanation.details = "Congestion"
+end
+	
+rule "Low FTP throughput due to high interference"
+activation-group "FtpThroughput"
+salience 2
+	when
+		Incident( name == "FILE_DOWNLOAD_EFFECTIVE_DATA_RATE")
+		RadioMetrics (getInterference() < -10.0)
+		RadioMetrics(getNumMeasurements() >= 3)		
+	then
+		explanation.details = "High interference"
+end
+
+rule "Low FTP throughput due to poor radio signal strength"
+activation-group "FtpThroughput"
+salience 3
+	when
+		Incident( name == "FILE_DOWNLOAD_EFFECTIVE_DATA_RATE")
+		RadioMetrics (getSignalStrength() < -100.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "Poor radio signal strength"
+end
+
+rule "Low WEB throughput due to congestion"
+	when
+		Incident( name == "HTTP_SERVICE_NON_ACCESIBILITY")
+		RadioMetrics(getHighspeedUsers() > 5)
+		RadioMetrics(getRAT() == "WCDMA")
+	then
+		explanation.details = "Congestion"
+end
+	
+rule "Low WEB throughput due to high interference"
+	when
+		Incident( name == "HTTP_SERVICE_NON_ACCESIBILITY")
+		RadioMetrics (getInterference() < -10.0)
+		RadioMetrics(getNumMeasurements() >= 3)				
+	then
+		explanation.details = "High interference"
+end
+
+rule "Low WEB throughput due to poor radio signal strength"
+	when
+		Incident( name == "HTTP_SERVICE_NON_ACCESIBILITY")
+		RadioMetrics (getSignalStrength() < -100.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "Poor radio signal strength"
+end
+
+rule "Bad service quality (Video) due to congestion"
+	when
+		Incident( name == "STREAMING_REBUFFERING_FAILURE_RATIO")
+		RadioMetrics(getHighspeedUsers() > 5)
+		RadioMetrics(getRAT() == "WCDMA")
+	then
+		explanation.details = "Congestion"
+end
+	
+rule "Bad service quality (Video) due to high interference"
+	when
+		Incident( name == "STREAMING_REBUFFERING_FAILURE_RATIO")
+		RadioMetrics (getInterference() < -10.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "High interference"
+end
+
+rule "Bad service quality (Video) due to poor radio signal strength"
+	when
+		Incident( name == "STREAMING_REBUFFERING_FAILURE_RATIO")
+		RadioMetrics (getSignalStrength() < -100.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "Poor radio signal strength"
+end
+
+rule "High number of drops due to high interference"
+	when
+		Incident( name == "INTERNAL_SYSTEM_BLOCK")
+		RadioMetrics (getInterference() < -10.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "High interference"
+end
+
+rule "High number of drops due to poor radio signal strength"
+	when
+		Incident( name == "INTERNAL_SYSTEM_BLOCK")
+		RadioMetrics (getSignalStrength() < -100.0)
+		RadioMetrics(getNumMeasurements() >= 3)
+	then
+		explanation.details = "Poor radio signal strength"
+end

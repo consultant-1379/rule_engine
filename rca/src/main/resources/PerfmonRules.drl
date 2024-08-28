@@ -1,0 +1,957 @@
+package perfmon_incident
+
+global perfmon_incident.PerfMonLogicServices services
+global java.lang.Integer ATTACH_INCIDENT_SCORE;
+global java.lang.Integer ACTIVATE_INCIDENT_SCORE;
+global java.lang.Integer DROP_INCIDENT_SCORE;
+global java.lang.Integer THROUGHPUT_INCIDENT_SCORE;
+global java.lang.Integer SUBSCRIPTION_INCIDENT_SCORE;
+global java.lang.Integer PING_PONG_INCIDENT_SCORE;
+
+dialect "mvel" declare RABSession_3G
+    @role( event )
+    @timestamp( eventtimestamp )
+    @expires( 30s )
+end
+
+declare Activate_3G
+    @role( event )	
+    @timestamp( eventtimestamp )
+    @expires( 30s )
+end 
+
+declare Attach_3G
+    @role( event )
+    @timestamp( eventtimestamp )
+    @expires( 30s ) 
+end
+
+declare IncidentReport
+    @role( event )
+    @timestamp( eventtimestamp )
+    @expires( 1h )
+end
+
+
+rule "load APNs from DB" 
+salience 1
+when
+   	a: APN() from entry-point "APNStream"
+   	not (APN(name == a.name))
+then 
+	ts = ((int)(a.eventtimestamp/1000))
+	insert( new APN( ts, a.name_l ))
+end
+
+/*
+rule "new IncidentReport from rules"
+salience 1 
+when 
+   	i: IncidentReport() 
+then 
+	ts = ((int)(i.eventtimestamp/1000))
+	services.log( "new IncidentReport " + ts + " imsi: " + i.imsi + " ruleid: " + i.ruleid + " cellid: " + i.cellid + " time: " + kcontext.getKnowledgeRuntime().getSessionClock().getCurrentTime() )
+end
+
+rule "Incoming AttachSession"
+salience 1
+when
+   	a: Attach_3G() from entry-point "Attach3GStream"
+then 
+	ts = ((int)(a.eventtimestamp/1000))
+	services.log( "Incoming Attach. " + ts + " imsi: " + a.imsi + " a.imsi)
+end
+
+rule "Incoming Activate_3G"
+salience 1
+when
+   	a: Activate_3G() from entry-point "Activate3GStream"
+then
+	ts = ((int)(a.eventtimestamp/1000)) 
+	services.log( "Incoming Activate. " + ts + " imsi: " + a.imsi + " apn: " + a.apn )
+end
+
+rule "Incoming RAB"
+salience 1
+when
+   	r: RABSession_3G( ) from entry-point "RABSessionStream"
+then
+	ts = ((int)(r.eventtimestamp/1000)) 
+	services.log("Incimong RAB " + ts + " imsi: " + r.imsi)
+end
+*/
+
+rule "Attach reject T1"
+when
+	a: Attach_3G( event_result == "REJECT", cause_code == "GPRS_SERVICE_NOT_ALLOWED" ) from entry-point "Attach3GStream"
+   	not (Attach_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Attach3GStream")
+   	not (Timers(cat == "1d", ruleid == "T1", textid == a.imsi))
+then 
+  	rulename = "Attach rejected: service not allowed"
+	ruleid = "T1"
+	rulecat = "NOC trouble ticket"
+	impact = "Subscriber"
+	reason = "Subscription" 
+	detail = 1
+	message = "Attach rejected: service not allowed"
+	message_high = "Accessibility problem: subscription"  
+	incidentscore = ATTACH_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "T1", a.imsi, ts))
+end
+
+rule "Attach reject T2"
+when
+	a: Attach_3G( event_result == "REJECT", cause_code == "GPRS_SERVICES_NOT_ALLOWED_IN_THIS_PLMN" ) from entry-point "Attach3GStream"
+   	not (Attach_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Attach3GStream")
+   	not (Timers(cat == "1d", ruleid == "T2", textid == a.imsi))
+then 
+	rulename = "Attach rejected: undefined IMSI or roaming restrictions"
+	ruleid = "T2"
+	rulecat = "NOC trouble ticket"
+	impact = "Subscriber"	
+	reason = "Subscription"
+	detail = 1
+	message = "Attach rejected: undefined IMSI or roaming restrictions"  
+	message_high = "Accessibility problem: roaming or undefined IMSI"
+	incidentscore = ATTACH_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "T2", a.imsi, ts))
+end
+
+rule "Attach reject T3"
+when
+	a: Attach_3G( event_result == "REJECT", cause_code == "NETWORK_FAILURE" ) from entry-point "Attach3GStream"
+   	not (Attach_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Attach3GStream")
+   	not (Timers(cat == "1d", ruleid == "T3", textid == a.imsi))
+then 
+	rulename = "Attach rejected: network failure"
+	ruleid = "T3"
+	rulecat = "NOC trouble ticket"
+	impact = "Core"
+	reason = "Network" 
+	detail = 2
+	message = "Attach rejected: network failure" 
+	message_high = "Network problem" 
+	incidentscore = ATTACH_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "T3", a.imsi, ts))
+end
+
+rule "Attach reject T4"
+when
+	a: Attach_3G( event_result == "REJECT", cause_code == "GPRS_SERVICE_AND_NON-GPRS_SERVICE_NOT_ALLOWED" ) from entry-point "Attach3GStream"
+   	not (Attach_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Attach3GStream")
+   	not (Timers(cat == "1d", ruleid == "T4", textid == a.imsi))
+then 
+	rulename = "Attach rejected: authentication failure"
+	ruleid = "T4"
+	rulecat = "NOC trouble ticket"
+	impact = "Subscriber"
+	reason = "Configuration"
+	detail = 1 
+	message = "Attach rejected: authentication failure" 
+	message_high = "Accessibility problem: authentication"
+	incidentscore = ATTACH_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "T4", a.imsi, ts))
+end
+
+rule "Attach reject T5"
+when
+	a: Attach_3G() from entry-point "Attach3GStream"
+    not (Attach_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Attach3GStream")
+    Number (intValue >= 3) from accumulate(
+    	Attach_3G( imsi == a.imsi, event_result == "REJECT", cause_code == "PROTOCOL_ERROR_UNSPECIFIED" ) from entry-point "Attach3GStream", count())
+	not (Timers(cat == "1d", ruleid == "T5", textid == a.imsi))
+then 
+	rulename = "Attach rejected: protocol error"
+	ruleid = "T5"
+	rulecat = "NOC trouble ticket"
+	impact = "Core"
+	reason = "Network"  
+	detail = 2
+	message = "Attach rejected: protocol error" 
+	message_high = "Network problem"
+	incidentscore = ATTACH_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "T5", a.imsi, ts))
+end
+
+rule "Activate reject A1"
+when
+	a: Activate_3G() from entry-point "Activate3GStream"
+   	not (Activate_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Activate3GStream")
+   	Number (intValue >= 3) from accumulate( 
+   			Activate_3G( imsi == a.imsi, event_result == "REJECT",
+   				(cause_code == "USER_AUTHENTICATION_FAILED" || == "UNKNOWN_PDP_ADDRESS_OR_PDP_TYPE" || == "UNKNOWN_OR_MISSING_ACCESS_POINT_NAME") 
+   				) from entry-point "Activate3GStream", count())
+   	not (Timers(cat == "1d", ruleid == "A1", textid == a.imsi))
+then 
+	rulename = "Activate rejected: configuration problem"
+	ruleid = "A1"
+	rulecat = "Terminal configuration"
+	impact = "Subscriber"
+	reason = "Configuration"
+	detail = 1 
+	message = "Activate rejected: configuration problem" 
+	message_high = "Accessibility problem: configuration"
+	incidentscore = ACTIVATE_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "A1", a.imsi, ts))
+end
+
+rule "Activate reject2 A2"
+when
+   	a: Activate_3G( event_result == "REJECT", (apn == "internet" || == "wap" || == "mms" || cause_code == "REQUESTED_SERVICE_OPTION_NOT_SUBSCRIBED") 
+   			) from entry-point "Activate3GStream"
+   	not (Activate_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Activate3GStream")
+   	not (Timers(cat == "1d", ruleid == "A2", textid == a.imsi))
+then 
+	rulename = "Activate rejected: no subscription"
+	ruleid = "A2"
+	rulecat = "Subscription problems"
+	impact = "Subscriber"
+	reason = "Subscription"
+	detail = 1 
+	message = "Activate rejected: no subscription" 
+	message_high = "No subscription"
+	incidentscore = ACTIVATE_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "A2", a.imsi, ts))
+end
+
+rule "Activate reject3 A3"
+when
+   	a: Activate_3G( event_result == "REJECT", cause_code == "NETWORK_FAILURE") from entry-point "Activate3GStream"
+   	not (Activate_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Activate3GStream")
+   	not (Timers(cat == "1d", ruleid == "A3", textid == a.imsi))
+then 
+	rulename = "Activate rejected: network failure"
+	ruleid = "A3"
+	rulecat = "NOC trouble ticket"
+	impact = "Core"
+	reason = "Network"  
+	detail = 2
+	message = "Activate rejected: network failure" 
+	message_high = "Network problem" 
+	incidentscore = ACTIVATE_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "A3", a.imsi, ts))
+end
+
+rule "Activate reject4 A4"
+when
+   	a: Activate_3G() from entry-point "Activate3GStream"
+   	not (Activate_3G(imsi == a.imsi, eventtimestamp > a.eventtimestamp) from entry-point "Activate3GStream")
+   	Number (intValue >= 3) from accumulate( 
+   			Activate_3G( imsi == a.imsi, event_result == "REJECT", cause_code == "INSUFFICIENT_RESOURCES" 
+   				) from entry-point "Activate3GStream", count())
+   	not (Timers(cat == "1d", ruleid == "A4", textid == a.imsi))
+then 
+	rulename = "Activate rejected: insufficient resources"
+	ruleid = "A4"
+	rulecat = "NOC trouble ticket"
+	impact = "Core"
+	reason = "Network"  
+	detail = 2
+	message = "Activate rejected: insufficient resources" 
+	message_high = "Network problem" 
+	incidentscore = ACTIVATE_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, a.vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, a.vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "A4", a.imsi, ts))
+end
+
+rule "Activate APN APN0"
+when
+   	a: Activate_3G(event_result == "SUCCESS") from entry-point "Activate3GStream"
+   	eval(((int)(a.imsi/10000000000)) == 24412) // DNA mcc+mnc
+   	not (APN(name_l == a.apn)) 
+then 
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite_apn(ts, a.apn)
+	insert( new APN( ts, a.apn ))
+	//services.log("new APN " + a.apn)
+end
+
+rule "Activate APN; APN"
+when
+   	a: Activate_3G(event_result == "REJECT") from entry-point "Activate3GStream"
+   	eval(((int)(a.imsi/10000000000)) == 24412) // DNA mcc+mnc
+   	not (APN(name == a.apn) || APN(name_l == a.apn))
+   	not (Timers(cat == "1d", ruleid == "APN", textid == a.imsi))
+then 
+	rulename = "Activate rejected: misspelled APN"
+	ruleid = "APN"
+	rulecat = "Terminal configuration"
+	impact = "Subscriber"
+	reason = "Configuration"	  
+	detail = 1
+	message = "Activate rejected: misspelled APN: " + a.apn
+	message_high = "Accessibility problem: misspelled APN (" + a.apn + ")"
+	vipstring = "\\N"
+	incidentscore = ACTIVATE_INCIDENT_SCORE * a.vipmultiplier
+	ts = ((int)(a.eventtimestamp/1000))
+	services.dbwrite( ts, a.imsi, a.msisdn, a.strimeitac, vipstring, incidentscore, message, a.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, a.apn, a.rat)
+	insert( new IncidentReport( ts, a.imsi, a.strimeitac, vipstring, incidentscore, a.globalcellid, ruleid))
+	insert( new Timers("1d", "APN", a.imsi, ts))
+end
+ 
+rule "High number of drops due to poor radio signal strength; R1"
+when 
+    r: RABSession_3G(n_meas >= 3, disccode != "NULL", rscp < -100.0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+    not (Timers(cat == "5m", ruleid == "R1", textid == r.imsi))
+then    
+	rulename = "High number of drops: poor radio signal strength"
+	ruleid = "R1"
+	rulecat = "Coverage and capacity issues"
+	impact = "Cell" 
+	reason = "Coverage"
+	detail = 2
+	message = "High number of drops: poor radio signal strength"
+	message_high = "Network problem"
+	incidentscore = DROP_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+	insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+	insert( new Timers("5m", "R1", r.imsi, ts))
+end
+
+rule "High number of drops due to high interference; R4"
+when 
+    r: RABSession_3G(n_meas >= 3, disccode != "NULL", ecn0 < -10.0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+    not (Timers(cat == "5m", ruleid == "R4", textid == r.imsi))
+then 
+	rulename = "High number of drops: high interference"
+	ruleid = "R4"
+	rulecat = "Coverage and capacity issues"
+	impact = "Subscriber"
+	reason = "Interference"
+	detail = 2 
+	message = "High number of drops: high interference"   
+	message_high = "Network problem"
+	incidentscore = DROP_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000)) 
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+	insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+	insert( new Timers("5m", "R4", r.imsi, ts))
+end
+
+rule "High number of drops due to underperforming terminal type; R7"
+when 
+	r: RABSession_3G(n_meas >= 3, disccode != "NULL", 
+		(strimeitac == "35602603" || == "35154604" || == "35866200" || == "35509302" || == "35298902" || == "35341103" || == "35414302")) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+    not (Timers(cat == "1d", ruleid == "R7", textid == r.imsi))
+then 
+	rulename = "High number of drops: terminal problem"
+	ruleid = "R7"
+	rulecat = "NOC trouble ticket"
+	impact = "Subscriber"
+	reason = "Terminal" 
+	detail = 1 
+	message = "High number of drops: terminal problem (" + r.strimeitac + ")"   
+	message_high = "Terminal problem"
+	incidentscore = DROP_INCIDENT_SCORE * r.vipmultiplier * 10
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+	insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+	insert( new Timers("1d", "R7", r.imsi, ts))
+end
+
+rule "subscription type vs HS category1 R10"
+when
+	r: RABSession_3G( rat == "WCDMA", 
+		(hscat == "CATEGORY_6" && maxdownloadrate > 4096000) || 
+		(hscat == "NO_HS_CAPABILITY" && maxdownloadrate > 384000) 
+	) from entry-point "RABSessionStream"
+    not (Timers(cat == "1d", ruleid == "R10", textid == r.imsi)) 
+then
+	rulename = "Subscription better than terminal"
+	ruleid = "R10"
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"  
+	detail = 1 
+	message = "Max DL rate (" + ((int)(r.maxdownloadrate/1000)) + ") is higher than terminal capability (" + r.hscat + ")"
+	message_high = message
+	cellid = 0
+	rnc = "\\N"
+	globalcellid = "\\N" 
+	apn = "\\N"
+	rat = "\\N"
+	incidentscore = SUBSCRIPTION_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, globalcellid, ruleid))
+    insert( new Timers("1d", "R10", r.imsi, ts))
+end
+
+rule "subscription type vs HS category2 R11"
+when	
+	r: RABSession_3G( rat == "WCDMA",
+		(hscat == "CATEGORY_6" && r.maxdownloadrate < 2048000 && r.maxdownloadrate > 0) ||  // CATEGORY_6 - 3.6M
+		(hscat == "CATEGORY_8" && r.maxdownloadrate < 4096000 && r.maxdownloadrate > 0)  	// CATEGORY_8 - 7.2M
+	) from entry-point "RABSessionStream"
+    not (Timers(cat == "1d", ruleid == "R11", textid == r.imsi)) 
+then
+	rulename = "Terminal better than subscription"
+	ruleid = "R11"
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"  
+	detail = 1 
+	message = "Max DL rate (" + ((int)(r.maxdownloadrate/1000)) + ") is lower than terminal capability (" + r.hscat + ")" 
+	message_high = message
+	cellid = 0 
+	rnc = "\\N"
+	globalcellid = "\\N"
+	apn = "\\N"
+	rat = "\\N"
+	vipstring = "\\N"
+	incidentscore = SUBSCRIPTION_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, vipstring, incidentscore, message, cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, vipstring, incidentscore, globalcellid, ruleid))
+    insert( new Timers("1d", "R11", r.imsi, ts))
+end
+
+rule "ping-pong R13"
+when
+	r: RABSession_3G( ciddistance < 2, handovers > 25) from entry-point "RABSessionStream"
+    not (Timers(cat == "1h", ruleid == "R13", textid == r.imsi)) 
+then
+	rulename = "Extensive ping-pong"
+	ruleid = "R13"
+	rulecat = "Coverage and capacity issues"
+	impact = "Subscriber"
+	reason = "Network"
+	detail = 2 
+	message = "Extensive ping-pong: " + r.handovers + " handovers in " + ((int)r.eventduration) + "s"	
+	message_high = "Network problem"
+	incidentscore = PING_PONG_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1h", "R13", r.imsi, ts))
+end
+
+rule "heavy user without HS capable terminal U1"
+when
+	r: RABSession_3G(rat == "WCDMA", hscat == "NO_HS_CAPABILITY", bytes_dl > 10000000) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U1", textid == r.imsi))
+then
+	rulename = "Heavy user without HS capable terminal"
+	ruleid = "U1"
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1
+	message = "Heavy user without HS capable terminal" 
+	message_high = "Heavy user with low end terminal"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U1", r.imsi, ts))
+end
+
+rule "heavy user with CATEGORY_6 terminal U2"
+when
+	r: RABSession_3G(rat == "WCDMA", hscat == "CATEGORY_6", bytes_dl > 10000000) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U2", textid == r.imsi))
+then
+	rulename = "Heavy user with CATEGORY_6 terminal"
+	ruleid = "U2"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Heavy user with CATEGORY_6 terminal" 
+	message_high = "Heavy user with low end terminal"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U2", r.imsi, ts))
+end
+
+rule "heavy user with low rate subscription U3"
+when
+	r: RABSession_3G(rat == "WCDMA", maxdownloadrate < 2000000, bytes_dl > 10000000, maxdownloadrate > 0) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U3", textid == r.imsi))
+then
+	rulename = "Heavy user with low rate subscription"
+	ruleid = "U3"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Heavy user with low rate subscription" 
+	message_high = message
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U3", r.imsi, ts))
+end
+
+rule "heavy user with filesharing U4"
+when
+	r: RABSession_3G(rat == "WCDMA", filesharing > 100000000) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U4", textid == r.imsi))
+then
+	rulename = "Heavy user with filesharing"
+	ruleid = "U4"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Heavy user with filesharing" 
+	message_high = message 
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U4", r.imsi, ts))
+end
+
+rule "social networking user without EUL capable terminal U5"
+when
+	r: RABSession_3G(rat == "WCDMA", social > 10000000, eulcat == "NO_EUL_CAPABILITY" ) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U5", textid == r.imsi))
+then
+	rulename = "Social networking user"
+	ruleid = "U5"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Social networking user without EUL capable terminal"	
+	message_high = message	
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U5", r.imsi, ts))
+end
+
+rule "media user with low rate subscription U6"
+when
+	r: RABSession_3G(rat == "WCDMA", maxdownloadrate < 2000000, media > 10000000, maxdownloadrate > 0) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U6", textid == r.imsi))
+then
+	rulename = "Media user with low rate subscription"
+	ruleid = "U6"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Media user with low rate subscription" 
+	message_high = message 
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U6", r.imsi, ts))
+end
+
+rule "media user with low end terminal U7"
+when
+	r: RABSession_3G(rat == "WCDMA", hscat == "NO_HS_CAPABILITY" || hscat == "CATEGORY_6",  media > 10000000) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "1d", ruleid == "U7", textid == r.imsi))
+then
+	rulename = "Media user with low end terminal"
+	ruleid = "U7"	
+	rulecat = "Up-sell possibilities"
+	impact = "Subscriber"
+	reason = "\\N"
+	detail = 1 
+	message = "Media user with low end terminal" 
+	message_high = message
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("1d", "U7", r.imsi, ts))
+end
+
+
+##################################################################
+# Analytics rules
+##################################################################
+
+rule "Cell problem; AR-C1"
+when
+	i: IncidentReport( cellid != 0 )  
+   	not (IncidentReport(cellid == i.cellid, eventtimestamp > i.eventtimestamp))
+   	n: Number (intValue >= 50) from accumulate( IncidentReport( cellid == i.cellid ) over window:time( 1h ), count())
+   	not (Timers(cat == "1h", ruleid == "AR-C1", textid == i.cellid ))
+then 
+	rulename = "Numerous cell problems"
+	ruleid = "AR-C1"
+	rulecat = "Cell problem" 
+	impact = "Cell"
+	reason = "Network"
+	detail = 2
+	message = "High number of problems in the cell; " + n + " reports in 1 hour"
+	message_high = "Network problem"
+	imsi = "\\N"
+	msisdn = "\\N"
+	imeitac = "\\N"
+	vipstring = "\\N"
+	incidentscore = 0
+	apn = "\\N"
+	rat = "\\N"
+	ts = ((int)(i.eventtimestamp/1000))
+	services.dbwrite( ts, imsi, msisdn, imeitac, vipstring, incidentscore, message, i.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+	insert( new Timers("1h", "AR-C1", i.cellid, ts))
+end
+
+rule "congested cell; AR-C2"
+when
+	i: IncidentReport( cellid != 0, ruleid == 'S-FCON' ) 
+   	not (IncidentReport(cellid == i.cellid, eventtimestamp > i.eventtimestamp))
+   	n: Number (intValue >= 25) from accumulate(  
+   			IncidentReport( cellid == i.cellid, ruleid == 'S-FCON' ) over window:time( 1h ), count())
+   	not (Timers(cat == "1h", ruleid == "AR-C2", textid == i.cellid))
+then 
+	rulename = "Congested cell"
+	ruleid = "AR-C2"
+	rulecat = "Cell problem" 
+	impact = "Cell" 
+	reason = "Congestion"
+	detail = 2
+	message = "Congested cell; " + n + " reports in 1 hour"
+	message_high = "Network problem"
+	imsi = "\\N"
+	msisdn = "\\N"
+	imeitac = "\\N"
+	vipstring = "\\N"
+	incidentscore = 0
+	apn = "\\N"
+	rat = "\\N"
+	ts = ((int)(i.eventtimestamp/1000))
+	services.dbwrite( ts, imsi, msisdn, imeitac, vipstring, incidentscore, message, i.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+	insert( new Timers("1h", "AR-C2", i.cellid, ts))
+end
+
+rule "cell bad radio; AR-C3"
+when
+	i: IncidentReport( cellid != 0, ruleid == 'R1' || ruleid == 'S-FCOV' )
+   	not (IncidentReport(cellid == i.cellid, eventtimestamp > i.eventtimestamp))
+   	n: Number (intValue >= 25) from accumulate(  
+   			IncidentReport( cellid == i.cellid, ruleid == 'R1' || ruleid == 'S-FCOV' ) over window:time( 1h ), count())
+   	not (Timers(cat == "1h", ruleid == "AR-C3", textid == i.cellid ))
+then 
+	rulename = "Cell radio problems"
+	ruleid = "AR-C3"
+	rulecat = "Cell problem" 
+	impact = "Cell" 
+	reason = "Coverage"
+	detail = 2
+	message = "High number of radio problems in the cell; " + n + " reports in 1 hour" 
+	message_high = "Network problem"
+	imsi = "\\N"
+	msisdn = "\\N"
+	imeitac = "\\N"
+	vipstring = "\\N"
+	incidentscore = 0
+	apn = "\\N"
+	rat = "\\N"
+	ts = ((int)(i.eventtimestamp/1000))
+	services.dbwrite( ts, imsi, msisdn, imeitac, vipstring, incidentscore, message, i.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+	insert( new Timers("1h", "AR-C3", i.cellid, ts))
+end
+
+rule "cell interference; AR-C4"
+when
+	i: IncidentReport( cellid != 0, ruleid == 'R4' || ruleid == 'S-FINT' )
+   	not (IncidentReport(cellid == i.cellid, eventtimestamp > i.eventtimestamp))
+   	n: Number (intValue >= 25) from accumulate(  
+   			IncidentReport( cellid == i.cellid, ruleid == 'R4' || ruleid == 'S-FINT' ) over window:time( 1h ), count())
+   	not (Timers(cat == "1h", ruleid == "AR-C4", textid == i.cellid ))
+then 
+	rulename = "Cell interference"
+	ruleid = "AR-C4"
+	rulecat = "Cell problem" 
+	impact = "Cell" 
+	reason = "Interference"
+	detail = 2
+	message = "High number of interference problems in the cell; " + n + " reports in 1 hour"
+	message_high = "Network problem"
+	imsi = "\\N"
+	msisdn = "\\N"
+	imeitac = "\\N"
+	vipstring = "\\N"
+	incidentscore = 0
+	apn = "\\N"
+	rat = "\\N"
+	ts = ((int)(i.eventtimestamp/1000))
+	services.dbwrite( ts, imsi, msisdn, imeitac, vipstring, incidentscore, message, i.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, apn, rat)
+	insert( new Timers("1h", "AR-C4", i.cellid, ts))
+end
+
+##################################################################
+# S-KPI rules 
+##################################################################
+
+//FTP TP
+rule "Low FTP throughput due to poor radio signal strength; S-FCOV"
+when
+	r: RABSession_3G(rat == "WCDMA", n_ftp >= 3, ftp_tp >0, ftp_tp < (0.5*maxdownloadrate), ftp_tp < 512000, 
+			rscp < -100.0, maxdownloadrate > 0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-FCOV", textid == r.imsi)) 
+then
+	rulename = "Low FTP throughput: poor radio signal strength"
+	ruleid = "S-FCOV"
+	rulecat = "Service performance"
+	impact = "FTP" 
+	reason = "Coverage"
+	detail = 1
+	message = "Low FTP throughput (" + ((int)(10 * r.ftp_tp/1024))/10 + "k): poor radio signal strength" 
+	message_high = "Bad service quality (FTP): coverage" 
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000)) 
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+	insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-FCOV", r.imsi, ts))
+end
+
+rule "Low FTP throughput due to high interference; S-FINT"
+when
+	r: RABSession_3G(rat == "WCDMA", n_ftp >= 3, ftp_tp>0, ftp_tp < (0.5*maxdownloadrate), ftp_tp < 512000, 
+			ecn0 < -10.0, maxdownloadrate > 0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-FINT", textid == r.imsi)) 
+then
+	rulename = "Low FTP throughput: high interference"
+	ruleid = "S-FINT"
+	rulecat = "Service performance"
+	impact = "FTP"
+	reason = "Interference"
+	detail = 2
+	message = "Low FTP throughput (" + ((int)(10 * r.ftp_tp/1024))/10 + "k): high interference" 
+	message_high = "Bad service quality (FTP): network problem"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-FINT", r.imsi, ts))
+end
+
+
+rule "congestion: low FTP throughput while the number of HS users is >=5 in a the cell S-FCON"
+when
+	r: RABSession_3G(rat == "WCDMA", ftp_tp>0, ftp_tp < (0.5*maxdownloadrate), ftp_tp < 512000, 
+			n_hsusers > 5 ) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-FCON", textid == r.imsi))
+then
+	rulename = "Low FTP throughput: congestion"
+	ruleid = "S-FCON"
+	rulecat = "Service performance"
+	impact = "FTP"
+	reason = "Congestion"
+	detail = 2
+	message = "Low FTP throughput (" + ((int)(10 * r.ftp_tp/1024))/10 + "k): cell congestion (" + ((int)(10 * r.n_hsusers))/10 + " users on average)"
+	message_high = "Bad service quality (FTP): network problem"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-FCON", r.imsi, ts))
+end
+
+//WEB TP
+rule "Low WEB throughput due to poor radio signal strength; S-WCOV"
+when
+	r: RABSession_3G(rat == "WCDMA", tcpdlthroughput>0, tcpdlthroughput < (0.5*maxdownloadrate), tcpdlthroughput < 512000, 
+			rscp < -100.0, maxdownloadrate > 0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-WCOV", textid == r.imsi)) 
+then
+	rulename = "Low WEB throughput: poor radio signal strength"
+	ruleid = "S-WCOV"
+	rulecat = "Service performance"
+	impact = "Web"
+	reason = "Coverage"
+	detail = 1
+	message = "Low WEB throughput (" + ((int)(10 * r.tcpdlthroughput/1024))/10 + "k): poor radio signal strength" 
+	message_high = "Bad service quality (Web): coverage"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+	insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-WCOV", r.imsi, ts))
+end
+
+rule "Low WEB throughput due to high interference; S-WINT"
+when
+	r: RABSession_3G(rat == "WCDMA", tcpdlthroughput>0, tcpdlthroughput < (0.5*maxdownloadrate), tcpdlthroughput < 512000, 
+			ecn0 < -10.0, maxdownloadrate > 0) from entry-point "RABSessionStream"
+    not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-WINT", textid == r.imsi)) 
+then
+	rulename = "Low WEB throughput: high interference"
+	ruleid = "S-WINT"
+	rulecat = "Service performance"
+	impact = "Web"
+	reason = "Interference"
+	detail = 2
+	message = "Low WEB throughput (" + ((int)(10 * r.tcpdlthroughput/1024))/10 + "k): high interference" 
+	message_high = "Bad service quality (Web): network problem"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-WINT", r.imsi, ts))
+end
+
+ 
+rule "congestion: low WEB throughput while the number of HS users is >=5 in a the cell S-WCON"
+when
+	r: RABSession_3G(rat == "WCDMA", tcpdlthroughput>0, tcpdlthroughput < (0.5*maxdownloadrate), tcpdlthroughput < 512000, 
+			n_hsusers > 5 ) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-WCON", textid == r.imsi))
+then
+	rulename = "Low WEB throughput: congestion"	
+	ruleid = "S-WCON"
+	rulecat = "Service performance"
+	impact = "Web"
+	reason = "Congestion"
+	detail = 2
+	message = "Low WEB throughput (" + ((int)(10 * r.tcpdlthroughput/1024))/10 + "k): cell congestion (" + ((int)(10 * r.n_hsusers))/10 + " users on average)"
+	message_high = "Bad service quality (Web): network problem" 
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-WCON", r.imsi, ts))
+end
+
+// VIDEO MOS 
+rule "video mos: S-VCOV"
+when
+	r: RABSession_3G(rat == "WCDMA", video_init_buf_time > 3.0, video_n_freeze >= 1, video_qoe < 2.5, video_qoe > 0, 
+			 n_hsusers > 5) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-VCOV", textid == r.imsi))
+then
+	rulename = "Low video QoE: congestion"
+	ruleid = "S-VCOV"
+	rulecat = "Service performance"
+	impact = "Video" 
+	reason = "Coverage"
+	detail = 1
+	message = "Low video QoE: cell congestion (" + ((int)(10 * r.n_hsusers))/10 + " users on average)"
+	message_high = "Bad service quality (Video): coverage"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-VCOV", r.imsi, ts))
+end
+
+rule "video mos: S-VINT"
+when
+	r: RABSession_3G(rat == "WCDMA", video_init_buf_time > 3.0, video_n_freeze >= 1, video_qoe < 2.5, video_qoe > 0, 
+			 ecn0 < -10.0) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-VINT", textid == r.imsi))
+then
+	rulename = "Low video QoE: high interference"
+	ruleid = "S-VINT"
+	rulecat = "Service performance"
+	impact = "Video"
+	reason = "Interference"
+	detail = 2
+	message = "Low video QoE: high interference"
+	message_high = "Bad service quality (Video): network problem"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-VINT", r.imsi, ts))
+end
+
+rule "video mos: S-VCON"
+when
+	r: RABSession_3G(rat == "WCDMA", video_init_buf_time > 3.0, video_n_freeze >= 1, video_qoe < 2.5, video_qoe > 0, 
+			 rscp < -100.0) from entry-point "RABSessionStream"
+	not (RABSession_3G( imsi == r.imsi, eventtimestamp > r.eventtimestamp ) from entry-point "RABSessionStream")
+	not (Timers(cat == "5m", ruleid == "S-VCON", textid == r.imsi))
+then
+	rulename = "Low video QoE: poor radio signal strength"
+	ruleid = "S-VCON"
+	rulecat = "Service performance"
+	impact = "Video" 
+	reason = "Congestion"
+	detail = 2
+	message = "Low video QoE: poor radio signal strength"
+	message_high = "Bad service quality (Video): network problem"
+	incidentscore = THROUGHPUT_INCIDENT_SCORE * r.vipmultiplier
+	ts = ((int)(r.eventtimestamp/1000))
+	services.dbwrite( ts, r.imsi, r.msisdn, r.strimeitac, r.vipstring, incidentscore, message, r.cellid, ruleid, rulename, rulecat, impact, reason, detail, message_high, r.apn, r.rat)
+    insert( new IncidentReport( ts, r.imsi, r.strimeitac, r.vipstring, incidentscore, r.globalcellid, ruleid))
+    insert( new Timers("5m", "S-VCON", r.imsi, ts))
+end
+
+
+##################################################################
+# TIMER retract rules
+##################################################################
+
+rule "retract timer - 5 min"
+	duration( 310s )
+when 
+    t: Timers( cat == "5m" )
+then 
+	retract(t)
+end
+
+rule "retract timer - 1 hour"
+	duration( 3601s )
+when 
+    t: Timers( cat == "1h" )
+then 
+	retract(t)
+end
+
+rule "retract timer - 1 day"
+	duration( 86401s )
+when 
+    t: Timers( cat == "1d" )
+then 
+	retract(t)
+end
+

@@ -1,0 +1,9 @@
+*.class
+*.log
+target
+target/*.*
+.project
+.classpath
+.settings
+.settings/*.*
+.pmd
